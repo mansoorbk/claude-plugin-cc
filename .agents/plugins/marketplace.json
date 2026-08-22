@@ -1,0 +1,20 @@
+{
+  "name": "claude-plugin-cc",
+  "interface": {
+    "displayName": "Claude Plugin CC"
+  },
+  "plugins": [
+    {
+      "name": "claude-adversarial-review",
+      "source": {
+        "source": "local",
+        "path": "./plugins/claude-adversarial-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "claude-adversarial-review-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/run-tests-sequentially.mjs",
+    "validate": "node --test tests/plugin-structure.test.mjs tests/skill-parity.test.mjs tests/runtime-result-contract.test.mjs tests/public-skill-routing.test.mjs"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}

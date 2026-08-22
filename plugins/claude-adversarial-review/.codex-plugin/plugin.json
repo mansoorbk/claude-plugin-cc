@@ -1,0 +1,22 @@
+{
+  "name": "claude-adversarial-review",
+  "version": "0.1.0",
+  "description": "Read-only Claude Code adversarial reviews for local Git changes.",
+  "author": {
+    "name": "Mansoor"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Claude Adversarial Review",
+    "shortDescription": "Challenge local Git changes with a second read-only review.",
+    "longDescription": "Runs one foreground Claude Code adversarial review against an explicit checkout, base, and scope, returning structured findings for independent adjudication.",
+    "developerName": "Mansoor",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "defaultPrompt": [
+      "Review my current Git changes adversarially.",
+      "Review this branch against origin/main.",
+      "Challenge this change's security boundaries."
+    ]
+  }
+}
