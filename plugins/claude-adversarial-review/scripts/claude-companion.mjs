@@ -3394,9 +3394,38 @@ export async function terminateProcessTree(
             creationTime
           }));
       } else {
-        targets = (
-          await listWindowsDescendantPidsFn(pid, helperOptions())
-        ).map((targetPid) => ({
+        let descendants;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const descendantOptions = helperOptions();
+          try {
+            descendants = await listWindowsDescendantPidsFn(pid, descendantOptions);
+          } catch (error) {
+            if (attempt === 1 || error?.code !== "PROCESS_CLEANUP_FAILED") {
+              throw error;
+            }
+            if (processIsAliveFn(pid)) {
+              throw new CompanionError(
+                "PROCESS_CLEANUP_FAILED",
+                "Windows process-tree cleanup could not safely retry descendant discovery because the root PID became active."
+              );
+            }
+            continue;
+          }
+          if (attempt === 1 && processIsAliveFn(pid)) {
+            throw new CompanionError(
+              "PROCESS_CLEANUP_FAILED",
+              "Windows process-tree cleanup could not safely accept retried descendant discovery because the root PID became active."
+            );
+          }
+          if (attempt === 1 && descendants.length > 0) {
+            throw new CompanionError(
+              "PROCESS_CLEANUP_FAILED",
+              "Windows process-tree cleanup could not safely accept identity-less descendants from retried discovery."
+            );
+          }
+          break;
+        }
+        targets = descendants.map((targetPid) => ({
           pid: targetPid,
           creationTime: null
         }));

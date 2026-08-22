@@ -714,6 +714,200 @@ test("Windows cleanup confirms an already-gone parent with no owned descendants"
   assert.equal(taskkillCalls, 0, "cleanup targeted a process outside an owned tree");
 });
 
+test("Windows cleanup retries an initial descendant snapshot failure within its original deadline", async () => {
+  const child = fakeChild();
+  const syntheticFailure = Object.assign(new Error("synthetic first snapshot failure"), {
+    code: "PROCESS_CLEANUP_FAILED"
+  });
+  let now = 10_000;
+  const helperTimeouts = [];
+
+  await terminateProcessTree(child, {
+    platform: "win32",
+    cleanupTimeoutMs: 5_000,
+    nowFn: () => now,
+    processIsAliveFn: () => false,
+    listWindowsDescendantPidsFn: async (_pid, { timeoutMs }) => {
+      helperTimeouts.push(timeoutMs);
+      if (helperTimeouts.length === 1) {
+        now += 3_000;
+        throw syntheticFailure;
+      }
+      return [];
+    },
+    waitForChildCloseFn: async () => true
+  });
+
+  assert.equal(helperTimeouts.length, 2);
+  assert.ok(helperTimeouts[0] > 0 && helperTimeouts[0] <= 3_000);
+  assert.ok(helperTimeouts[1] > 0 && helperTimeouts[1] < helperTimeouts[0]);
+});
+
+test("Windows cleanup does not retry when descendant helper budget generation exceeds the deadline", async () => {
+  const child = fakeChild();
+  const clockValues = [10_000, 15_000];
+  let clockReads = 0;
+  let livenessChecks = 0;
+  let snapshotAttempts = 0;
+
+  await assert.rejects(
+    terminateProcessTree(child, {
+      platform: "win32",
+      cleanupTimeoutMs: 5_000,
+      nowFn: () => {
+        const value = clockValues[Math.min(clockReads, clockValues.length - 1)];
+        clockReads += 1;
+        return value;
+      },
+      processIsAliveFn: (targetPid) => {
+        assert.equal(targetPid, child.pid);
+        livenessChecks += 1;
+        return false;
+      },
+      listWindowsDescendantPidsFn: async () => {
+        snapshotAttempts += 1;
+        return [];
+      },
+      waitForChildCloseFn: async () => true
+    }),
+    (error) => error?.code === "PROCESS_CLEANUP_FAILED"
+  );
+
+  assert.equal(clockReads, 2);
+  assert.equal(livenessChecks, 1);
+  assert.equal(snapshotAttempts, 0);
+});
+
+test("Windows cleanup fails closed if the root PID reappears before descendant snapshot retry", async () => {
+  const child = fakeChild();
+  const syntheticFailure = Object.assign(new Error("synthetic first snapshot failure"), {
+    code: "PROCESS_CLEANUP_FAILED"
+  });
+  let livenessChecks = 0;
+  let snapshotAttempts = 0;
+  let killCalls = 0;
+
+  await assert.rejects(
+    terminateProcessTree(child, {
+      platform: "win32",
+      processIsAliveFn: (targetPid) => {
+        assert.equal(targetPid, child.pid);
+        livenessChecks += 1;
+        return livenessChecks > 1;
+      },
+      listWindowsDescendantPidsFn: async () => {
+        snapshotAttempts += 1;
+        if (snapshotAttempts === 1) {
+          throw syntheticFailure;
+        }
+        return [];
+      },
+      runWindowsTaskkillFn: async () => {
+        killCalls += 1;
+        return { completed: true, status: 0 };
+      },
+      waitForChildCloseFn: async () => true
+    }),
+    (error) => error?.code === "PROCESS_CLEANUP_FAILED"
+  );
+
+  assert.equal(livenessChecks, 2);
+  assert.equal(snapshotAttempts, 1);
+  assert.equal(killCalls, 0);
+});
+
+test("Windows cleanup fails closed if the root PID reappears during descendant snapshot retry", async () => {
+  const child = fakeChild();
+  const syntheticFailure = Object.assign(new Error("synthetic first snapshot failure"), {
+    code: "PROCESS_CLEANUP_FAILED"
+  });
+  let rootActive = false;
+  let snapshotAttempts = 0;
+  let killCalls = 0;
+
+  await assert.rejects(
+    terminateProcessTree(child, {
+      platform: "win32",
+      processIsAliveFn: (targetPid) => targetPid === child.pid && rootActive,
+      listWindowsDescendantPidsFn: async () => {
+        snapshotAttempts += 1;
+        if (snapshotAttempts === 1) {
+          throw syntheticFailure;
+        }
+        rootActive = true;
+        return [5001];
+      },
+      runWindowsTaskkillFn: async () => {
+        killCalls += 1;
+        return { completed: true, status: 0 };
+      },
+      waitForChildCloseFn: async () => true
+    }),
+    (error) => error?.code === "PROCESS_CLEANUP_FAILED"
+  );
+
+  assert.equal(snapshotAttempts, 2);
+  assert.equal(killCalls, 0);
+});
+
+test("Windows cleanup fails closed if root PID reuse occurs entirely during descendant snapshot retry", async () => {
+  const child = fakeChild();
+  const syntheticFailure = Object.assign(new Error("synthetic first snapshot failure"), {
+    code: "PROCESS_CLEANUP_FAILED"
+  });
+  let rootActive = false;
+  let snapshotAttempts = 0;
+  let killCalls = 0;
+
+  await assert.rejects(
+    terminateProcessTree(child, {
+      platform: "win32",
+      processIsAliveFn: (targetPid) => targetPid === child.pid && rootActive,
+      listWindowsDescendantPidsFn: async () => {
+        snapshotAttempts += 1;
+        if (snapshotAttempts === 1) {
+          throw syntheticFailure;
+        }
+        rootActive = true;
+        rootActive = false;
+        return [5001];
+      },
+      runWindowsTaskkillFn: async () => {
+        killCalls += 1;
+        return { completed: true, status: 0 };
+      },
+      waitForChildCloseFn: async () => true
+    }),
+    (error) => error?.code === "PROCESS_CLEANUP_FAILED"
+  );
+
+  assert.equal(snapshotAttempts, 2);
+  assert.equal(killCalls, 0);
+});
+
+test("Windows cleanup remains fail-closed when descendant snapshot retry also fails", async () => {
+  const child = fakeChild();
+  const syntheticFailure = Object.assign(new Error("synthetic persistent snapshot failure"), {
+    code: "PROCESS_CLEANUP_FAILED"
+  });
+  let attempts = 0;
+
+  await assert.rejects(
+    terminateProcessTree(child, {
+      platform: "win32",
+      processIsAliveFn: () => false,
+      listWindowsDescendantPidsFn: async () => {
+        attempts += 1;
+        throw syntheticFailure;
+      },
+      waitForChildCloseFn: async () => true
+    }),
+    (error) => error?.code === "PROCESS_CLEANUP_FAILED"
+  );
+
+  assert.equal(attempts, 2);
+});
+
 test(
   "Windows cleanup terminates an owned detached grandchild after its parent exits",
   { skip: process.platform !== "win32" },
